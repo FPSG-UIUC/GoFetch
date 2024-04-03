@@ -1,0 +1,27 @@
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# executed file
+*.exe
+*.out
+
+# asmbly
+asm/
+!**/openssl-src-111.22.0+1.1.1q/**/asm/
+
+# rust target
+target/
+
+# result
+*.txt
+data/
+plots/
+
+# python cache
+__pycache__
+
+# Apple cache
+.DS_Store
