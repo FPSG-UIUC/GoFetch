@@ -72,7 +72,7 @@ sudo ./src/quick_check.out <set_dit>
 
 **Do-not-scan hint:** Run `./l2l1fetch.sh <trial>`. We load a pointer from the L2 cache and differentiate where this pointer comes from. We find that if the pointer comes from L1 cache (L1->L2) then it will *not* be dereferenced, if it comes from DRAM (DRAM->L2), it will be dereferenced. The reason is that the pointer comes from L1 is likely to be inspected before, and the DMP tries to avoid redundant inspection.
 
-### Restrictions on dereferenced
+### Restrictions on dereferenced Pointers
 **4GByte prefetch region:** Run `./addrsweep.sh 0x10000000 16 0x380000000 <trial>`. Create a big buffer across the 4GByte boundary. Here, we start the buffer from 0x380000000 and select 16 candidate addresses with a fixed stride 0x10000000. Every time we pick two addresses from the 16 candidates, one is selected as the pointer value, the other one is the location we put the selected pointer value. We find that these two should be in the same 4GByte region to activate the DMP.
 
 **Top byte ignore:** Run `./tbi.sh <trial>`. Select a pointer as the test pointer, flip one of upper bits of it and then place it in the aop. We trigger the DMP on the flipped pointer to see if the DMP can still dereference the original pointer. We find that the DMP ignore the bit flip of the upper 8 bits.
