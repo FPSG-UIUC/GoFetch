@@ -72,7 +72,7 @@ sudo ./src/quick_check.out <set_dit>
 
 **Do-not-scan hint:** Run `./l2l1fetch.sh <trial>`. We load a pointer from the L2 cache and differentiate where this pointer comes from. We find that if the pointer comes from L1 cache (L1->L2) then it will *not* be dereferenced, if it comes from DRAM (DRAM->L2), it will be dereferenced. The reason is that the pointer comes from L1 is likely to be inspected before, and the DMP tries to avoid redundant inspection.
 
-### Restrictions on dereferenced Pointers
+### Restrictions on Dereferenced Pointers
 **4GByte prefetch region:** Run `./addrsweep.sh 0x10000000 16 0x380000000 <trial>`. Create a big buffer across the 4GByte boundary. Here, we start the buffer from 0x380000000 and select 16 candidate addresses with a fixed stride 0x10000000. Every time we pick two addresses from the 16 candidates, one is selected as the pointer value, the other one is the location we put the selected pointer value. We find that these two should be in the same 4GByte region to activate the DMP.
 
 **Top byte ignore:** Run `./tbi.sh <trial>`. Select a pointer as the test pointer, flip one of upper bits of it and then place it in the aop. We trigger the DMP on the flipped pointer to see if the DMP can still dereference the original pointer. We find that the DMP ignore the bit flip of the upper 8 bits.
@@ -80,7 +80,119 @@ sudo ./src/quick_check.out <set_dit>
 **Auxiliary next-line prefetch:** Run `nextline.sh <trial>`. We trigger the DMP on a specific pointer and find that not only the cache line pointed by the pointer is prefetched by the DMP, but the next line is also prefetched.
 
 ## Constant-Time Cryptography PoCs
-To be released soon.
+From the understanding of how the DMP works, we develop a new type of chosen-input attack framework, where the attacker engineers a secret-dependent pointer value in victim's memory (by giving the victim a chosen input to process) and exploit the DMP to deduce the secret from it. To this end, the attacker has to inspect the victim program:
+
+* Spot the mixture of secret data and chosen input. Since the DMP only leaks pointer values, the attacker should have enough control over the mixture, such that the mixture could be a valid pointer value depending on the secret data.
+* To confirm the DMP scanning over the mixture, one eviction set is required to evict the mixture (later on the victim reloads it from the memory) and the attacker needs the other eviction set to monitor whether the DMP dereferences the secret-dependent pointer (Prime+Probe channel). To get both of them,
+    * The page offset of mixture address should be stable across runs and the space of eviction set candidates can shrink.
+    * Cold, valid pages locating in the same 4GByte region as the mixture should be stable across runs. And the attacker will search the DMP prefetch target (pointed by the secret-dependent pointer) within these pages.
+    * Having pre-knowledge in hand (page offset of mixture's address, address range to pick as secret-dependent pointer), the attacker has to force the mixture as the pointer (secret-independent) and try different combination of eviction sets until detect the DMP signal.
+
+To show the idea, we build end-to-end key extraction PoCs for constant-time cryptographic implementations on Apple M1 machines running macOS.
+
+### Constant-Time Conditional Swap
+Constant-time conditional swap performs a swap between two arrays, `a` and `b`, depending on the secret `s` (`s=1` swap, `s=0` no swap). The attacker places the pointer in one of arrays (`a`), and target the other one (`b`) to see if the content of it triggers the DMP dereferencing the pointer, in other words, whether the swap happens.
+
+**Determine the address of dyld cache:** the location of the dyld shared library is randomized for each boot time, so we need to run `dyld_search` every time reboot the machine.
+```
+cd crypto_attacker
+cargo b -r --example dyld_search
+./target/release/examples/dyld_search
+```
+
+**Run experiments:** Run the attacker and victim separately. The victim has one input argument, `<secret>`, it could be set as 1 or 0. The attacker has three arguments. In our example, we configure the attacker measures 32 samples for each chosen input, set the threshold of the Prime+Probe channel as 680 ticks and group 8 standard eviction sets as the eviction set for the mixture.
+
+```
+# attacker
+cd crypto_attacker
+cargo b -r --example ctswap_attacker
+./target/release/examples/ctswap_attacker 32 680 8
+# victim
+cd crypto_victim
+cargo b -r --example ctswap_victim
+./target/release/examples/ctswap_victim <secret>
+```
+
+**Analyze leakage result:** The attacker records the time consumption of each stage in `ctswap_bench.txt` and Prime+Probe latency samples depending on victim's secret in `ctswap.txt`. Four real cryptographic examples below also record above benchmarking results.
+
+
+### Go's RSA Encryption
+Go's RSA implementation adopts Chinese Remainder Theorem to accelerate the decryption. One necessary step in the decryption procedure is a modular operation between chosen cipher `c` and secret prime `p` (or `q`), `c mod p`. By placing a pointer value in `c`, the mixture `c mod p` contains a secret-dependent pointer value.
+
+**Run experiments:** Run the attacker and victim separately. Apart from the same three arguments as in [constant-time conditional swap](#constant-time-conditional-swap), the attacker has four additional inputs. In our example, we configure the attacker to search for target pointer from 0x14000400000 to 0x14000590000, determine one bit of guess after observing 3 positive DMP signals or 10 negative DMP signals.
+
+```
+# attacker
+cd crypto_attacker
+cargo b -r --example rsa_attacker --features rsa
+./target/release/examples/rsa_attacker 32 680 8 0x14000400000 0x14000590000 3 10
+# victim
+cd crypto_victim
+cargo b -r --example rsa_victim --features rsa
+./target/release/examples/rsa_victim
+```
+
+**Analyze leakage result:** Run `python crypto_accuracy.py --crypto rsa` to analyze Prime+Probe latency of positive/negative DMP signals, and the accuracy of our attack. Also, the Coppersmith algorithm (`coppersmith.sage.py`) is called to recover the whole secret prime. We borrow the Coppersmith implementation from [link](https://github.com/mimoo/RSA-and-LLL-attacks).
+
+### OpenSSL Diffie-Hellman Key Exchange
+OpenSSL DHKE implementation utilizes a window-based exponentiation algorithm. The intermediate state of each iteration depends on the secret prefix, which allows the attacker to craft a public key to guess/examine the secret window by window.
+
+**Determine the address of dyld cache:** Navigate to [link](#constant-time-conditional-swap).
+
+**Run experiments:** Run the attacker and victim separately. The attacker has the same arguments as in [constant-time conditional swap](#constant-time-conditional-swap)
+
+```
+# attacker
+cd crypto_attacker
+cargo b -r --example dh_attacker --features dh
+./target/release/examples/dh_attacker 32 680 8
+# victim
+cd crypto_victim
+cargo b -r --example dh_victim --features dh
+./target/release/examples/dh_victim
+```
+
+**Analyze leakage result:** Run `python crypto_accuracy.py --crypto dh` to analyze Prime+Probe latency of positive/negative DMP signals, and the accuracy of our attack.
+
+### CRYSTALS-Kyber (ML-KEM)
+Kyber's inside public key encryption scheme is vulnerable to Key Mismatch Attack. Although the Fujisaki-Okamoto transformation prevent mismatch information from Kyber's output, the DMP can examine the intermediate state to learn the mismatch information and re-enable the Key Mismatch Attack. We refer the Key Mismatch Attack implementation from [link](https://github.com/AHaQY/Key-Mismatch-Attack-on-NIST-KEMs).
+
+**Determine the address of dyld cache:** Navigate to [link](#constant-time-conditional-swap).
+
+**Run experiments:** Run the attacker and victim separately. Apart from the same three arguments as in [constant-time conditional swap](#constant-time-conditional-swap), the attacker has one additional input. In our example, we configure the attacker to determine one coefficient of guess after observing 5 positive signals.
+
+```
+# attacker
+cd crypto_attacker
+cargo b -r --example kyber_attacker --features kyber
+./target/release/examples/kyber_attacker 32 680 8 5
+# victim
+cd crypto_victim
+cargo b -r --example kyber_victim --features kyber
+./target/release/examples/kyber_victim
+```
+
+**Analyze leakage result:** Run `python crypto_accuracy.py --crypto kyber` to analyze Prime+Probe latency of positive/negative DMP signals, and the accuracy of our attack. Also, the lattice reduction tool (`kyber_reduction.py`) is called to recover the whole secret. We borrow the lattice reduction tool from [link](https://github.com/juliannowakowski/lwe_with_hints).
+
+### CRYSTALS-Dilithium (ML-DSA)
+Dilithium is a digital signature scheme. In the sign function, there is an equation `z=y+cs1`, where `s1` is the secret, `z` and `c` are exposed through the output signature. By leveraging the DMP to leak `y`, the attacker can collect linear equations with regard to the secret and further use the lattice reduction tool to recover the secret.
+
+**Offline signature collection:** Navigate to `poc/dilithium_data` to proceed.
+
+**Run experiments:** Run the attacker and victim separately. Apart from the same three arguments as in [constant-time conditional swap](#constant-time-conditional-swap), the attacker has four additional inputs. In our example, we offline collect signatures that inject `z` with pointer `ptr` such that `ptr & 0xffffc000 = 0x10000` (same page frame number pointers to ease eviction set generation), configure the attacker to determine one equation of guess after observing 10 positive DMP signals, online collect 256 signatures per secret polynomial. Finally, 1 refers to the attempt id (running the online stage multiple times and doing intersection can increase the success rate).
+
+```
+# attacker
+cd crypto_attacker
+cargo b -r --example dilithium_attacker --features dilithium
+./target/release/examples/dilithium_attacker 32 680 8 0x10000 10 256 1
+# victim
+cd crypto_victim
+cargo b -r --example dilithium_victim --features dilithium
+./target/release/examples/dilithium_victim
+```
+
+**Analyze leakage result:** Run `python crypto_accuracy.py --crypto dilithium` to analyze Prime+Probe latency of positive/negative DMP signals, and the accuracy of our attack. Also, the lattice reduction tool (`dilithium_reduction.py`) is called to recover the whole secret. We borrow the lattice reduction tool from [link](https://github.com/juliannowakowski/lwe_with_hints).
 
 ## Common Errors and Fixes
 1. Segmentation Fault

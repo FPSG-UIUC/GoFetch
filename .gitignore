@@ -25,3 +25,9 @@ __pycache__
 
 # Apple cache
 .DS_Store
+
+# Cargo
+Cargo.lock
+
+# target page offset file
+!*_addr.txt

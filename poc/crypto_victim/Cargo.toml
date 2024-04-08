@@ -1,0 +1,26 @@
+[package]
+name = "crypto_victim"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[features]
+kyber = ['libkyber-ffi-sys']
+dh = ['openssl']
+rsa = ['librsa-ffi-sys']
+dilithium = ['libdilithium-ffi-sys']
+
+
+[dependencies]
+libaugury-ffi-sys = { path = "../libaugury-ffi-sys" }
+libkyber-ffi-sys = { path = "../libkyber-ffi-sys", optional=true }
+libdilithium-ffi-sys = { path = "../libdilithium-ffi-sys", optional=true }
+librsa-ffi-sys = { path = "../librsa-ffi-sys", optional=true }
+openssl = { path = "../openssl-0.10.42", features = ["vendored", "bindgen"], optional=true }
+mmap-rs = { git = "https://github.com/StephanvanSchaik/mmap-rs", rev = "793a012" }
+rand = "0.8"
+
+[profile.release.package.libaugury-ffi-sys]
+opt-level = 0

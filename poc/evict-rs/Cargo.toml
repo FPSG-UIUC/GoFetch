@@ -1,0 +1,14 @@
+[package]
+name = "evict-rs"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+
+[dependencies]
+intrusive-collections = "0.9"
+rand = "0.8"
+mmap-rs = { git = "https://github.com/StephanvanSchaik/mmap-rs", rev = "793a012" }
+libc = "0.2"
+env_logger = "0.9"
+log = "0.4"

@@ -1,0 +1,10 @@
+[package]
+name = "libdilithium-ffi-sys"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+links = "./src/libdilithium.a"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
